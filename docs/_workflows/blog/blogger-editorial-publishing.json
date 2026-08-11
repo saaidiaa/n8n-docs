@@ -1,0 +1,176 @@
+{
+  "name": "Blogger editorial and publishing pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "0c4fef74-41ed-49a6-b67f-9c1bb7283b06",
+      "name": "Daily publishing check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CONTENT_CALENDAR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Content Calendar",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "a1a37ab3-a7a8-4c24-9260-1303513b9a99",
+      "name": "Read content calendar",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nreturn $input.all().filter(({ json: post }) => {\n  const status = String(post.status ?? '').trim().toLowerCase();\n  const publishAt = new Date(post.publish_at);\n  return status === 'approved' && !Number.isNaN(publishAt.getTime()) && publishAt <= now && post.title && post.content;\n}).map(({ json: post }) => ({ json: { ...post, row_number: post.row_number ?? post.rowNumber } }));"
+      },
+      "id": "c58c9c16-2a7a-42ef-b93d-94e8e0d0d402",
+      "name": "Select approved posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/blogger/v3/blogs/REPLACE_WITH_BLOGGER_BLOG_ID/posts/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ title: $json.title, content: $json.content, labels: $json.labels ? $json.labels.split(',').map(label => label.trim()).filter(Boolean) : [] }) }}",
+        "options": {}
+      },
+      "id": "94c0c80c-4058-4c85-8188-3d21e8ad0fcf",
+      "name": "Publish to Blogger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        300
+      ],
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "REPLACE_AFTER_IMPORT",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CONTENT_CALENDAR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Content Calendar",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "Published",
+            "published_at": "={{ $now.toISO() }}",
+            "blogger_id": "={{ $json.id }}",
+            "url": "={{ $json.url }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "738336f2-2a19-4c58-94e2-065356f7cbd8",
+      "name": "Mark as published",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_EDITORIAL_CHANNEL_ID",
+          "mode": "id"
+        },
+        "text": "✅ تم نشر المقال على Blogger: {{ $('Publish to Blogger').item.json.title }}\n{{ $('Publish to Blogger').item.json.url }}",
+        "otherOptions": {}
+      },
+      "id": "e51d4dd0-7f8e-4d6f-9f27-3a27e04548c4",
+      "name": "Notify editorial team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1400,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily publishing check": {
+      "main": [[{"node": "Read content calendar", "type": "main", "index": 0}]]
+    },
+    "Read content calendar": {
+      "main": [[{"node": "Select approved posts", "type": "main", "index": 0}]]
+    },
+    "Select approved posts": {
+      "main": [[{"node": "Publish to Blogger", "type": "main", "index": 0}]]
+    },
+    "Publish to Blogger": {
+      "main": [[{"node": "Mark as published", "type": "main", "index": 0}]]
+    },
+    "Mark as published": {
+      "main": [[{"node": "Notify editorial team", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1aa23010-82a5-4fe4-bf67-bdf54becd3d6",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
