@@ -60,6 +60,7 @@ nav:
         - Tags: workflows/tags.md
         - Export and import: workflows/export-import.md
         - Templates: workflows/templates.md
+        - Blog editorial and publishing pipeline: workflows/blog-editorial-publishing.md
         - Sharing: workflows/sharing.md
         - Settings: workflows/settings.md
         - Streaming responses: workflows/streaming.md

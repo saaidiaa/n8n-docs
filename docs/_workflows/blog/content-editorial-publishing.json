@@ -1,0 +1,169 @@
+{
+  "name": "Professional blog editorial and publishing pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "a9f3b5b4-1b42-4fd7-bf3a-45a7c4e58ef1",
+      "name": "Daily publishing check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CONTENT_CALENDAR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Content Calendar",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "3f8f8bb2-0dcb-4f4f-93a1-03e6f4b52ef4",
+      "name": "Read content calendar",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst ready = [];\n\nfor (const item of $input.all()) {\n  const post = item.json;\n  const status = String(post.status ?? '').trim().toLowerCase();\n  const publishAt = new Date(post.publish_at);\n  if (status !== 'approved' || Number.isNaN(publishAt.getTime()) || publishAt > now) continue;\n  if (!post.title || !post.content) continue;\n  ready.push({ json: { ...post, row_number: post.row_number ?? post.rowNumber } });\n}\n\nreturn ready;"
+      },
+      "id": "a563bca9-9455-493b-b9c9-c7e258f7db4e",
+      "name": "Select approved posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "title": "={{ $json.title }}",
+        "additionalFields": {
+          "content": "={{ $json.content }}",
+          "status": "publish",
+          "slug": "={{ $json.slug }}"
+        }
+      },
+      "id": "7b5f2d60-3e2d-49c0-a588-d15e4fb2d9b1",
+      "name": "Publish to WordPress",
+      "type": "n8n-nodes-base.wordpress",
+      "typeVersion": 1,
+      "position": [
+        940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CONTENT_CALENDAR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Content Calendar",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "Published",
+            "published_at": "={{ $now.toISO() }}",
+            "wordpress_id": "={{ $json.id }}",
+            "url": "={{ $json.link }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "e9b0b0b3-4ea8-4e36-9225-f57e1cf77734",
+      "name": "Mark as published",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_EDITORIAL_CHANNEL_ID",
+          "mode": "id"
+        },
+        "text": "✅ تم نشر المقال: {{ $('Publish to WordPress').item.json.title }}\n{{ $('Publish to WordPress').item.json.link }}",
+        "otherOptions": {}
+      },
+      "id": "83ad761d-9fa7-4035-9890-1a4d29172d80",
+      "name": "Notify editorial team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1420,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily publishing check": {
+      "main": [[{"node": "Read content calendar", "type": "main", "index": 0}]]
+    },
+    "Read content calendar": {
+      "main": [[{"node": "Select approved posts", "type": "main", "index": 0}]]
+    },
+    "Select approved posts": {
+      "main": [[{"node": "Publish to WordPress", "type": "main", "index": 0}]]
+    },
+    "Publish to WordPress": {
+      "main": [[{"node": "Mark as published", "type": "main", "index": 0}]]
+    },
+    "Mark as published": {
+      "main": [[{"node": "Notify editorial team", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d6cbfd97-d5bd-42bf-887f-fd77a0559bce",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
