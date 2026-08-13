@@ -8,7 +8,8 @@
 const SNIPER = Object.freeze({
   TIMEZONE: 'Africa/Tunis',
   SEND_HOUR: 16,
-  POLL_MINUTES: 1,
+  POLL_MINUTES: 5,
+  MAX_OUTBOUND_MESSAGES_PER_DAY: 25,
   DEFAULT_START_DAY: 2,
   TRIGGER_FUNCTION: 'sniperTick',
   CONTENT_URL:
@@ -20,6 +21,9 @@ const SNIPER = Object.freeze({
 const STATE = Object.freeze({
   QUEUE_INDEX: 'QUEUE_INDEX',
   UPDATE_OFFSET: 'UPDATE_OFFSET',
+  LAST_PROCESSED_UPDATE_ID: 'LAST_PROCESSED_UPDATE_ID',
+  OUTBOUND_DATE: 'OUTBOUND_DATE',
+  OUTBOUND_COUNT: 'OUTBOUND_COUNT',
   PENDING_POST_ID: 'PENDING_POST_ID',
   AWAITING_REVISION_ID: 'AWAITING_REVISION_ID',
   NEEDS_REVISION_ID: 'NEEDS_REVISION_ID',
@@ -62,6 +66,9 @@ function setupSniperTn() {
     );
   }
   properties.setProperty(STATE.UPDATE_OFFSET, '0');
+  properties.setProperty(STATE.LAST_PROCESSED_UPDATE_ID, '-1');
+  properties.deleteProperty(STATE.OUTBOUND_DATE);
+  properties.deleteProperty(STATE.OUTBOUND_COUNT);
   properties.deleteProperty(STATE.PENDING_POST_ID);
   properties.deleteProperty(STATE.AWAITING_REVISION_ID);
   properties.deleteProperty(STATE.NEEDS_REVISION_ID);
@@ -89,7 +96,7 @@ function setupSniperTn() {
   };
 }
 
-/** Run automatically every minute. */
+/** Run automatically at the configured polling interval. */
 function sniperTick() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
@@ -128,12 +135,18 @@ function testTelegramConnection() {
   return { ok: true, username: me.username || '', botId: String(me.id) };
 }
 
-/** Stop only this Apps Script automation. */
+/** Stop all time triggers in this dedicated Apps Script project. */
 function stopSniperTn() {
   removeSniperTriggers_();
   const config = getConfig_();
   sendText_(config, '⏸ تم إيقاف الإرسال التلقائي من Google Apps Script.');
   return { ok: true };
+}
+
+/** Emergency stop that doesn't need Telegram credentials to be valid. */
+function emergencyStop() {
+  removeSniperTriggers_();
+  return { ok: true, stopped: true };
 }
 
 /** Reset the queue to a 1-based day number, for example resetQueueToDay(2). */
@@ -177,7 +190,30 @@ function processTelegramUpdates_() {
     config.botToken
   );
 
-  response.result.forEach(function (update) {
+  const updates = Array.isArray(response.result)
+    ? response.result.slice().sort(function (a, b) {
+        return Number(a.update_id) - Number(b.update_id);
+      })
+    : [];
+  if (!updates.length) return;
+
+  // Advance the polling offset before running handlers. If Google terminates an
+  // execution unexpectedly, Telegram won't replay the whole batch and cause spam.
+  const highestUpdateId = Number(updates[updates.length - 1].update_id);
+  properties.setProperty(STATE.UPDATE_OFFSET, String(highestUpdateId + 1));
+
+  let lastProcessedId = Number(
+    properties.getProperty(STATE.LAST_PROCESSED_UPDATE_ID) || '-1'
+  );
+
+  updates.forEach(function (update) {
+    const updateId = Number(update.update_id);
+    if (!Number.isFinite(updateId) || updateId <= lastProcessedId) return;
+
+    // Mark each update before handling it: processing is intentionally at-most-once.
+    properties.setProperty(STATE.LAST_PROCESSED_UPDATE_ID, String(updateId));
+    lastProcessedId = updateId;
+
     try {
       if (update.callback_query) {
         handleCallback_(config, update.callback_query);
@@ -186,12 +222,14 @@ function processTelegramUpdates_() {
       }
     } catch (error) {
       console.error('Update ' + update.update_id + ': ' + error);
-      sendText_(config, '⚠️ تعذّرت معالجة الرسالة: ' + safeErrorMessage_(error));
-    } finally {
-      properties.setProperty(
-        STATE.UPDATE_OFFSET,
-        String(Number(update.update_id) + 1)
-      );
+      try {
+        sendText_(
+          config,
+          '⚠️ تعذّرت معالجة الرسالة: ' + safeErrorMessage_(error)
+        );
+      } catch (notificationError) {
+        console.error('Could not report update error: ' + notificationError);
+      }
     }
   });
 }
@@ -600,6 +638,7 @@ function getConfig_() {
 
 function telegramApi_(method, payload, token) {
   const botToken = token || getConfig_().botToken;
+  reserveOutboundMessageSlot_(method);
   const response = UrlFetchApp.fetch(
     'https://api.telegram.org/bot' + botToken + '/' + method,
     {
@@ -625,6 +664,37 @@ function telegramApi_(method, payload, token) {
     );
   }
   return body;
+}
+
+function reserveOutboundMessageSlot_(method) {
+  const messageCreatingMethods = {
+    sendMessage: true,
+    sendVideo: true,
+    sendPhoto: true,
+    sendDocument: true,
+    sendAudio: true,
+    sendAnimation: true,
+  };
+  if (!messageCreatingMethods[method]) return;
+
+  const properties = PropertiesService.getScriptProperties();
+  const today = Utilities.formatDate(new Date(), SNIPER.TIMEZONE, 'yyyy-MM-dd');
+  let count = Number(properties.getProperty(STATE.OUTBOUND_COUNT) || '0');
+  const storedDate = properties.getProperty(STATE.OUTBOUND_DATE);
+
+  if (storedDate !== today) {
+    properties.setProperty(STATE.OUTBOUND_DATE, today);
+    count = 0;
+  }
+
+  if (count >= SNIPER.MAX_OUTBOUND_MESSAGES_PER_DAY) {
+    throw new Error(
+      'توقف أمان الإرسال: تم بلوغ الحد اليومي ' +
+        SNIPER.MAX_OUTBOUND_MESSAGES_PER_DAY +
+        '. شغّل emergencyStop وافحص Triggers.'
+    );
+  }
+  properties.setProperty(STATE.OUTBOUND_COUNT, String(count + 1));
 }
 
 function sendText_(config, text) {
@@ -654,10 +724,10 @@ function setBotCommands_(config) {
 }
 
 function removeSniperTriggers_() {
+  // This is a dedicated project, so remove every installable trigger. This also
+  // cleans up accidental triggers attached to setup/status functions.
   ScriptApp.getProjectTriggers().forEach(function (trigger) {
-    if (trigger.getHandlerFunction() === SNIPER.TRIGGER_FUNCTION) {
-      ScriptApp.deleteTrigger(trigger);
-    }
+    ScriptApp.deleteTrigger(trigger);
   });
 }
 

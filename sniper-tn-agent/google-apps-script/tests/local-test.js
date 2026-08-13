@@ -19,6 +19,7 @@ const values = new Map([
   ['APPROVER_USER_ID', '222'],
 ]);
 const calls = [];
+let telegramUpdates = [];
 const triggers = [];
 const cache = new Map();
 
@@ -106,7 +107,8 @@ const context = {
         });
       }
       if (method === 'getUpdates') {
-        return new MockResponse(200, { ok: true, result: [] });
+        // Deliberately replay the same mock batch so Code.gs must deduplicate it.
+        return new MockResponse(200, { ok: true, result: telegramUpdates });
       }
       return new MockResponse(200, { ok: true, result: true });
     },
@@ -118,7 +120,7 @@ vm.runInContext(
   `${code}\n` +
     `globalThis.__test = {\n` +
     `  setupSniperTn, sendNextContentNow, resetQueueToDay,\n` +
-    `  handleCallback_, getConfig_, sendCurrentContent_\n` +
+    `  handleCallback_, getConfig_, sendCurrentContent_, processTelegramUpdates_\n` +
     `};`,
   context,
 );
@@ -128,7 +130,27 @@ const setup = api.setupSniperTn();
 assert.equal(setup.ok, true);
 assert.equal(setup.nextDay, 2);
 assert.equal(triggers.length, 1);
-assert.equal(triggers[0].minutes, 1);
+assert.equal(triggers[0].minutes, 5);
+
+// Telegram may replay a batch after a transient failure. It must be handled once.
+telegramUpdates = [
+  {
+    update_id: 50,
+    message: { from: { id: 222 }, chat: { id: 111 }, text: '/status' },
+  },
+];
+const messagesBeforeReplay = calls.filter(
+  (call) => call.method === 'sendMessage',
+).length;
+api.processTelegramUpdates_();
+api.processTelegramUpdates_();
+const messagesAfterReplay = calls.filter(
+  (call) => call.method === 'sendMessage',
+).length;
+assert.equal(messagesAfterReplay - messagesBeforeReplay, 1);
+assert.equal(values.get('UPDATE_OFFSET'), '51');
+assert.equal(values.get('LAST_PROCESSED_UPDATE_ID'), '50');
+telegramUpdates = [];
 
 const sent = api.sendNextContentNow();
 assert.equal(sent.ok, true);
