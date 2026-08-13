@@ -24,9 +24,15 @@
    - **طلب تعديل:** يفتح نموذجًا لجمع الملاحظة، ولا ينتقل الطابور إلى الفيديو التالي.
 5. يمنع `approverTelegramUserId` أي حساب آخر من اتخاذ القرار.
 
-## البدء
+## خيارات التشغيل
 
-اتبع [دليل الإعداد خطوة بخطوة](n8n/SETUP-AR.md). لا تضع Bot Token أو Page Access Token في ملف، في Workflow، أو في المحادثة؛ خزّنهما داخل **Credentials** في n8n فقط.
+### مجاني عبر Google Apps Script
+
+اتبع [دليل Google Apps Script](google-apps-script/SETUP-AR.md). هذه النسخة لا تحتاج اشتراكًا أو سيرفرًا، وترسل الفيديوهات إلى Telegram وتدير الموافقة والطابور ضمن حدود Google المجانية.
+
+### عبر n8n Cloud
+
+اتبع [دليل إعداد n8n](n8n/SETUP-AR.md). لا تضع Bot Token أو Page Access Token في ملف، في Workflow، أو في المحادثة؛ خزّنهما داخل **Credentials** فقط.
 
 ## المحتوى
 
