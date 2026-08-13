@@ -74,7 +74,7 @@ const approvalMessage = [
   post.narration,
   '',
   'نص منشور فيسبوك:',
-  `${{post.caption}}\\n\\n${{hashtagsText}}`,
+  post.caption,
   '',
   `التعليق المثبّت: ${{post.pinnedComment}}`,
   '',
